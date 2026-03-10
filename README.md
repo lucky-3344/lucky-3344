@@ -75,9 +75,9 @@ copy config_template.json config.json
 2. **准备Excel文件**
 在 `config.json` 中指定的 Excel 文件的**第一列**写入要下载的文件名，例如：
 ```
-广州黄埔区奥园香雪公馆6栋
-广州黄埔区WJ会议中心
-广州黄埔区华港大酒店
+XXXX公馆6栋
+XXXXX会议中心
+XXXXXXX大酒店
 ```
 
 3. **启动云盘客户端**
