@@ -59,12 +59,50 @@ pip install -r requirements.txt
 
 ## 使用步骤
 
+### 账号访问权限配置
+
+> **首次使用前必须完成此步骤**，否则程序将使用默认路径（可能不适用于您的电脑）。
+
+1. **复制配置模板**
+```bash
+# Windows
+copy config_template.json config.json
+
+# Linux / macOS
+cp config_template.json config.json
+```
+
+2. **编辑 `config.json`，填写您自己的路径**
+```json
+{
+  "download_dir": "D:\\我的下载目录",
+  "excel_path": "D:\\我的文件列表.xlsx",
+  "cloud_client_path": "C:\\yidongyunpan\\mCloud\\mCloud.exe",
+  "cloud_folder_path": [],
+  "base_dir": "D:\\cloud_downloader"
+}
+```
+
+| 配置项 | 说明 |
+|--------|------|
+| `download_dir` | 文件下载到本地的目录路径 |
+| `excel_path` | 包含要下载文件名的 Excel 文件路径 |
+| `cloud_client_path` | 移动云盘客户端程序（`mCloud.exe`）的完整路径 |
+| `cloud_folder_path` | 云盘内的子目录层级，留空`[]`表示在根目录搜索 |
+| `base_dir` | 程序运行时存放配置、日志、调试截图的基础目录 |
+
+3. **确认移动云盘客户端已安装并登录**  
+   程序通过 UI 自动化操作已登录的客户端，**不会替您自动登录**。  
+   登录步骤：打开客户端 → 输入账号密码 → 登录成功后保持客户端窗口打开。
+
 ### 第一次使用
 
 1. **编辑配置文件**
 ```bash
-# 复制模板
+# 复制模板（Windows）
 copy config_template.json config.json
+# 复制模板（Linux/macOS）
+cp config_template.json config.json
 
 # 编辑 config.json，修改以下项目：
 # - download_dir: 下载目录

@@ -1,0 +1,7 @@
+{
+  "download_dir": "C:\\Users\\YourUsername\\Desktop\\移动云盘批量下载",
+  "excel_path": "C:\\Users\\YourUsername\\Desktop\\云盘待搜索文件名.xlsx",
+  "cloud_client_path": "C:\\yidongyunpan\\mCloud\\mCloud.exe",
+  "cloud_folder_path": [],
+  "base_dir": "C:\\Users\\YourUsername\\cloud_downloader"
+}
