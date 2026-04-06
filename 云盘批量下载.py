@@ -3,6 +3,7 @@ from pywinauto.application import Application
 import pandas as pd
 import time
 import os
+import json
 import subprocess
 from datetime import datetime
 import pyautogui
@@ -10,30 +11,48 @@ import pyperclip
 import logging
 from pathlib import Path
 
+def load_config():
+    """从 config.json 加载配置，若不存在则返回默认值"""
+    script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+    config_path = script_dir / "config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"警告: 读取 config.json 失败，将使用默认配置: {e}")
+    return {}
+
 class MobileCloudDownloader:
     def __init__(self):
+        config = load_config()
+
         self.main_window = None
-        self.download_dir = r"C:\Users\lucky\Desktop\移动云盘批量下载"
-        self.excel_path = r"C:\Users\lucky\Desktop\云盘待搜索文件名.xlsx"
+        self.download_dir = config.get("download_dir", r"C:\Users\lucky\Desktop\移动云盘批量下载")
+        self.excel_path = config.get("excel_path", r"C:\Users\lucky\Desktop\云盘待搜索文件名.xlsx")
+        self.cloud_client_path = config.get("cloud_client_path", r"C:\yidongyunpan\mCloud\mCloud.exe")
         self.not_found = []
         
         # 云盘内目录路径（从根目录开始的层级列表）
         # 例如: ["工作文件", "2024项目", "图纸"] 表示进入 工作文件/2024项目/图纸
-        self.cloud_folder_path = []  # 空列表表示在根目录搜索
+        self.cloud_folder_path = config.get("cloud_folder_path", [])  # 空列表表示在根目录搜索
         
         # 记录搜索框位置（第一次搜索时记录，后续复用）
         self.search_box_pos = None
+
+        # 基础目录（用于存放配置、资源、调试文件）
+        base_dir = Path(config.get("base_dir", r"C:\Users\lucky\projects\my_project\cloud_downloader"))
         
         # 配置文件路径（保存搜索框位置）
-        self.config_file = Path(r"C:\Users\lucky\projects\my_project\cloud_downloader\search_box_pos.txt")
+        self.config_file = base_dir / "search_box_pos.txt"
 
         # 更新资源目录路径
-        self.resource_path = Path(r"C:\Users\lucky\projects\my_project\cloud_downloader\resources\images")
+        self.resource_path = base_dir / "resources" / "images"
         self.download_btn_path = self.resource_path / "download_btn.png"
         self.confirm_btn_path = self.resource_path / "confirm_btn.png"
         
         # 调试截图目录
-        self.debug_dir = Path(r"C:\Users\lucky\projects\my_project\cloud_downloader\debug")
+        self.debug_dir = base_dir / "debug"
         self.debug_dir.mkdir(parents=True, exist_ok=True)
         
         # 设置日志 - 同时输出到文件和控制台
@@ -247,7 +266,7 @@ class MobileCloudDownloader:
 
     def connect_to_client(self):
         """连接到移动云盘客户端"""
-        client_path = r"C:\yidongyunpan\mCloud\mCloud.exe"
+        client_path = self.cloud_client_path
         try:
             # 尝试连接到已运行的云盘客户端
             self.app = Application(backend='uia').connect(
@@ -956,16 +975,11 @@ class MobileCloudDownloader:
 def main():
     """主程序入口"""
     try:
-        # 创建下载器实例
+        # 创建下载器实例（自动从 config.json 加载配置）
         downloader = MobileCloudDownloader()
         
-        # ============ 配置云盘目录路径 ============
-        # 设置要进入的云盘目录层级（从根目录开始）
-        # 例如要进入 "工作文件/2024项目/图纸" 目录，设置为：
+        # 注意: 若需覆盖 config.json 中的云盘目录，可在此处赋值，例如:
         # downloader.cloud_folder_path = ["工作文件", "2024项目", "图纸"]
-        # 留空则在当前位置搜索：
-        downloader.cloud_folder_path = []
-        # ==========================================
         
         # 确保资源目录存在
         if not downloader.resource_path.exists():
@@ -987,6 +1001,7 @@ def main():
         if not Path(downloader.excel_path).exists():
             print("错误: 未找到Excel文件！")
             print(f"请确保文件存在: {downloader.excel_path}")
+            print("提示: 请复制 config_template.json 为 config.json 并修改其中的路径配置")
             return
             
         # 检查下载目录是否存在
