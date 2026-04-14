@@ -1,0 +1,36 @@
+{
+  "stock_name": "平安银行",
+  "ts_code": "000001.SZ",
+  "analysis_date": "2026-04-14 08:47:11",
+  "levels_analyzed": [
+    "daily"
+  ],
+  "results": {
+    "daily": {
+      "trend": "consolidation",
+      "sentiment": "neutral",
+      "bi_count": 60,
+      "zhongshu_count": 3,
+      "beichi_count": 0,
+      "current_price": 11.07,
+      "signals": [
+        {
+          "date": "2026-04-13 00:00:00",
+          "signal": "buy",
+          "signal_type": "中枢突破",
+          "reason": "Breakout above zhongshu 10.92",
+          "confidence": 0.75,
+          "priority": 2
+        },
+        {
+          "date": "2026-04-13 00:00:00",
+          "signal": "trend",
+          "signal_type": "趋势参考",
+          "reason": "Trend: consolidation | Sentiment: neutral",
+          "confidence": 0.6,
+          "priority": 3
+        }
+      ]
+    }
+  }
+}
