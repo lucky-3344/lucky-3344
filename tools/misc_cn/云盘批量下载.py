@@ -11,45 +11,43 @@ import logging
 from pathlib import Path
 
 class MobileCloudDownloader:
-    def __init__(self):
+    def __init__(self, fast_mode=False):
+        self.fast_mode = fast_mode
         self.main_window = None
         self.download_dir = r"C:\Users\lucky\Desktop\移动云盘批量下载"
         self.excel_path = r"C:\Users\lucky\Desktop\云盘待搜索文件名.xlsx"
         self.not_found = []
-        
         # 云盘内目录路径（从根目录开始的层级列表）
         # 例如: ["工作文件", "2024项目", "图纸"] 表示进入 工作文件/2024项目/图纸
         self.cloud_folder_path = []  # 空列表表示在根目录搜索
-        
         # 记录搜索框位置（第一次搜索时记录，后续复用）
         self.search_box_pos = None
-        
         # 配置文件路径（保存搜索框位置）
         self.config_file = Path(r"C:\Users\lucky\projects\my_project\cloud_downloader\search_box_pos.txt")
-
         # 更新资源目录路径
         self.resource_path = Path(r"C:\Users\lucky\projects\my_project\cloud_downloader\resources\images")
         self.download_btn_path = self.resource_path / "download_btn.png"
         self.confirm_btn_path = self.resource_path / "confirm_btn.png"
-        
         # 调试截图目录
         self.debug_dir = Path(r"C:\Users\lucky\projects\my_project\cloud_downloader\debug")
         self.debug_dir.mkdir(parents=True, exist_ok=True)
         
-        # 设置日志 - 同时输出到文件和控制台
+        # 设置日志 - 只添加一次 handler，避免重复输出
         log_file = self.debug_dir / f"download_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        root_logger = logging.getLogger()
+        # 清空所有 handler，防止重复
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
         logging.basicConfig(
             filename=str(log_file),
             level=logging.DEBUG,
             format='%(asctime)s [%(levelname)s] %(message)s',
             encoding='utf-8'
         )
-        # 同时输出到控制台
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-        logging.getLogger().addHandler(console_handler)
-        
+        root_logger.addHandler(console_handler)
         print(f"日志文件: {log_file}")
 
     def take_debug_screenshot(self, name):
@@ -95,6 +93,74 @@ class MobileCloudDownloader:
             logging.warning(f"加载搜索框位置失败: {e}")
         return None
     
+    def get_existing_files(self):
+        """获取下载目录中已存在的文件列表"""
+        try:
+            if os.path.exists(self.download_dir):
+                return os.listdir(self.download_dir)
+            return []
+        except Exception as e:
+            logging.warning(f"获取已存在文件列表失败: {e}")
+            return []
+    
+    def verify_download(self, filename, files_before, timeout=60):
+        """验证文件是否下载成功
+        
+        Args:
+            filename: 搜索的文件名
+            files_before: 下载前的文件列表
+            timeout: 超时时间（秒）
+        
+        Returns:
+            (success, downloaded_name): 是否成功，下载的文件名
+        """
+        self.log_step("验证下载", f"文件名: {filename}, 超时: {timeout}秒")
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                current_files = self.get_existing_files()
+                # 查找新增的文件
+                new_files = [f for f in current_files if f not in files_before]
+                
+                if new_files:
+                    # 检查是否有匹配的文件（忽略扩展名）
+                    for new_file in new_files:
+                        # 移除扩展名进行比较
+                        new_name = os.path.splitext(new_file)[0]
+                        if filename.lower() in new_name.lower():
+                            self.log_step("下载验证成功", f"新文件: {new_file}")
+                            return True, new_file
+                    
+                    # 如果有新文件但不匹配，可能是正在下载中
+                    # 检查是否有 .downloading 或临时文件
+                    downloading = any('.downloading' in f or '.tmp' in f or '.part' in f for f in new_files)
+                    if downloading:
+                        self.log_step("下载进行中", "检测到临时文件")
+                        time.sleep(2)
+                        continue
+                    
+                    # 如果有新文件但都不匹配，返回第一个（可能是重命名的文件）
+                    if new_files:
+                        self.log_step("下载完成", f"新文件: {new_files[0]}")
+                        return True, new_files[0]
+                
+                # 检查是否有正在下载的临时文件
+                for f in current_files:
+                    if '.downloading' in f or '.tmp' in f or '.part' in f:
+                        self.log_step("下载进行中", f"临时文件: {f}")
+                        time.sleep(2)
+                        break
+                else:
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logging.warning(f"验证下载时出错: {e}")
+                time.sleep(1)
+        
+        self.log_step("下载验证超时", f"等待了 {timeout} 秒")
+        return False, None
+    
     def find_by_icon(self, file_extension):
         """使用图标模板识别文件
         
@@ -132,14 +198,17 @@ class MobileCloudDownloader:
             
             # 获取窗口位置，限制搜索区域
             try:
-                win_rect = self.main_window.rectangle()
-                win_left = win_rect.left
-                win_top = win_rect.top
-                win_width = win_rect.width()
-                win_height = win_rect.height()
-                # 只在搜索结果区域查找（窗口中部）
-                search_region = (win_left + 50, win_top + 200, win_width - 100, win_height - 300)
-            except:
+                if self.main_window is not None:
+                    win_rect = self.main_window.rectangle()
+                    win_left = win_rect.left
+                    win_top = win_rect.top
+                    win_width = win_rect.width()
+                    win_height = win_rect.height()
+                    # 只在搜索结果区域查找（窗口中部）
+                    search_region = (win_left + 50, win_top + 200, win_width - 100, win_height - 300)
+                else:
+                    search_region = None
+            except Exception:
                 search_region = None  # 如果获取窗口失败，全屏搜索
             
             # VSD和PDF图标相似，都使用更高精度
@@ -158,17 +227,18 @@ class MobileCloudDownloader:
                 if len(locations) > 10:
                     # 过滤掉太靠上或太靠下的（界面装饰元素）
                     try:
-                        win_rect = self.main_window.rectangle()
-                        win_top = win_rect.top
-                        win_height = win_rect.height()
-                        # 只保留在窗口中间70%区域的图标
-                        middle_start = win_top + int(win_height * 0.2)
-                        middle_end = win_top + int(win_height * 0.9)
-                        filtered = [loc for loc in locations if middle_start <= loc.top <= middle_end]
-                        if filtered:
-                            locations = filtered
-                            self.log_step("过滤后的图标", f"数量: {len(locations)}")
-                    except:
+                        if self.main_window is not None:
+                            win_rect = self.main_window.rectangle()
+                            win_top = win_rect.top
+                            win_height = win_rect.height()
+                            # 只保留在窗口中间70%区域的图标
+                            middle_start = win_top + int(win_height * 0.2)
+                            middle_end = win_top + int(win_height * 0.9)
+                            filtered = [loc for loc in locations if middle_start <= loc.top <= middle_end]
+                            if filtered:
+                                locations = filtered
+                                self.log_step("过滤后的图标", f"数量: {len(locations)}")
+                    except Exception:
                         pass
                 
                 # 选择最靠上的图标（第一个搜索结果）
@@ -314,177 +384,80 @@ class MobileCloudDownloader:
                     
                     # 尝试找到List或DataGrid控件
                     file_list = None
-                    for ctrl_type in ["List", "DataGrid", "Table"]:
-                        try:
-                            file_list = self.main_window.child_window(
-                                control_type=ctrl_type,
-                                found_index=0
-                            )
-                            if file_list.exists(timeout=1):
-                                break
-                        except:
-                            continue
+                    if self.main_window is not None:
+                        for ctrl_type in ["List", "DataGrid", "Table"]:
+                            try:
+                                file_list = self.main_window.child_window(auto_id="file_list", control_type=ctrl_type)
+                                if file_list.exists():
+                                    break
+                            except Exception:
+                                continue
                     
                     if file_list and file_list.exists():
-                        items = file_list.children()
-                        for item in items:
+                        # 在列表中查找文件夹
+                        for item in file_list.children():
                             try:
-                                item_text = item.window_text()
-                                if folder_name.lower() in item_text.lower():
-                                    print(f"    找到文件夹: {item_text}")
+                                item_name = item.window_text()
+                                if folder_name in item_name:
                                     item.double_click_input()
                                     folder_found = True
-                                    time.sleep(2)  # 等待文件夹打开
                                     break
-                            except:
+                            except Exception:
                                 continue
                 except Exception as e:
-                    logging.warning(f"通过列表查找文件夹失败: {str(e)}")
+                    logging.debug(f"方式1查找文件夹失败: {e}")
                 
-                # 方式2: 使用地址栏或搜索
+                # 方式2: 使用搜索功能
                 if not folder_found:
-                    print(f"    未在列表找到文件夹，尝试使用搜索...")
-                    # 可以扩展其他导航方式
-                    logging.warning(f"无法找到文件夹: {folder_name}")
+                    try:
+                        # 点击搜索框
+                        if self.search_box_pos:
+                            pyautogui.click(self.search_box_pos[0], self.search_box_pos[1])
+                        else:
+                            # 尝试使用快捷键 Ctrl+F
+                            pyautogui.hotkey('ctrl', 'f')
+                        time.sleep(0.5)
+                        
+                        # 输入文件夹名
+                        pyperclip.copy(folder_name)
+                        pyautogui.hotkey('ctrl', 'v')
+                        time.sleep(1)
+                        pyautogui.press('enter')
+                        time.sleep(2)
+                        
+                        # 查找文件夹图标
+                        folder_item = self.find_by_icon("folder")
+                        if folder_item:
+                            folder_item.double_click_input()
+                            folder_found = True
+                    except Exception as e:
+                        logging.debug(f"方式2查找文件夹失败: {e}")
+                
+                if not folder_found:
+                    print(f"  警告: 未找到文件夹 '{folder_name}'")
+                    logging.warning(f"未找到文件夹: {folder_name}")
                     return False
+                
+                time.sleep(1)
             
-            print(f"已成功进入目录: {'/'.join(self.cloud_folder_path)}")
-            logging.info(f"导航到目录: {'/'.join(self.cloud_folder_path)}")
+            print("已成功导航到目标目录")
+            logging.info("导航到目标目录成功")
             return True
             
         except Exception as e:
+            logging.error(f"导航到目录失败: {str(e)}")
             print(f"导航到目录失败: {str(e)}")
-            logging.error(f"导航失败: {str(e)}")
             return False
 
-    def get_existing_files(self):
-        """获取下载目录中已存在的文件和文件夹列表"""
-        try:
-            download_path = Path(self.download_dir)
-            if download_path.exists():
-                # 同时获取文件和文件夹，排除临时文件
-                return set(f.name for f in download_path.iterdir() 
-                          if not f.name.startswith('.') and not f.name.startswith('~'))
-            return set()
-        except Exception as e:
-            logging.error(f"获取已有文件列表失败: {str(e)}")
-            return set()
-
-    def verify_download(self, filename, files_before, timeout=30):
-        """验证文件是否下载成功
-        
-        Args:
-            filename: 期望的文件名（或部分名称）
-            files_before: 下载前的文件列表
-            timeout: 超时时间（秒）
-        
-        Returns:
-            (bool, str): (是否成功, 下载的文件名)
-        """
-        print(f"正在验证下载: {filename}")
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            try:
-                files_after = self.get_existing_files()
-                new_files = files_after - files_before
-                
-                if new_files:
-                    download_path = Path(self.download_dir)
-                    
-                    # 优先匹配：文件名包含搜索关键词的文件
-                    matched_files = []
-                    matched_folders = []
-                    
-                    for new_file in new_files:
-                        file_path = download_path / new_file
-                        if filename.lower() in new_file.lower():
-                            if file_path.is_file():
-                                matched_files.append(new_file)
-                            else:
-                                matched_folders.append(new_file)
-                    
-                    # 优先返回文件
-                    if matched_files:
-                        result_file = matched_files[0]
-                        print(f"  ✓ 下载成功(文件): {result_file}")
-                        logging.info(f"下载验证成功(文件): {result_file}")
-                        return True, result_file
-                    
-                    # 如果没有匹配的文件，考虑文件夹
-                    if matched_folders:
-                        result_folder = matched_folders[0]
-                        print(f"  ✓ 下载成功(文件夹): {result_folder}")
-                        logging.info(f"下载验证成功(文件夹): {result_folder}")
-                        return True, result_folder
-                    
-                    # 如果名称不匹配，优先选择文件而不是文件夹
-                    other_files = []
-                    other_folders = []
-                    for new_file in new_files:
-                        file_path = download_path / new_file
-                        if file_path.is_file():
-                            other_files.append(new_file)
-                        else:
-                            other_folders.append(new_file)
-                    
-                    if other_files:
-                        result_file = other_files[0]
-                        print(f"  ? 发现新文件（名称不完全匹配）: {result_file}")
-                        logging.info(f"下载验证（名称不匹配-文件）: {result_file}")
-                        return True, result_file
-                    
-                    if other_folders:
-                        result_folder = other_folders[0]
-                        print(f"  ? 发现新文件夹（名称不完全匹配）: {result_folder}")
-                        logging.info(f"下载验证（名称不匹配-文件夹）: {result_folder}")
-                        return True, result_folder
-                
-                time.sleep(2)  # 每2秒检查一次
-                
-            except Exception as e:
-                logging.warning(f"验证下载时出错: {str(e)}")
-                time.sleep(2)
-        
-        print(f"  ✗ 下载超时或失败: {filename}")
-        logging.warning(f"下载验证超时: {filename}")
-        return False, None
-
     def dismiss_interfering_dialogs(self):
-        """清理会打断自动化流程的系统/应用弹窗。"""
+        """清理干扰弹窗"""
         closed_count = 0
         try:
-            # 先发 ESC，关闭可能的悬浮菜单/提示层
-            pyautogui.press('esc')
-            time.sleep(0.2)
-            pyautogui.press('esc')
-            time.sleep(0.2)
-
-            dialog_title_keywords = [
-                "打开方式",
-                "如何打开",
-                "选择要用于打开",
-                "安全警告",
-                "打开文件",
-            ]
-
-            for win in Desktop(backend='uia').windows():
-                try:
-                    title = (win.window_text() or "").strip()
-                    if not title:
-                        continue
-                    if any(k in title for k in dialog_title_keywords):
-                        if win.is_visible():
-                            win.set_focus()
-                            pyautogui.press('esc')
-                            time.sleep(0.2)
-                            try:
-                                win.close()
-                            except Exception:
-                                pyautogui.hotkey('alt', 'f4')
-                            closed_count += 1
-                except Exception:
-                    continue
+            # 尝试按 ESC 关闭可能的弹窗
+            for _ in range(3):
+                pyautogui.press('esc')
+                time.sleep(0.3)
+                closed_count += 1
         except Exception as e:
             logging.debug(f"清理弹窗失败: {e}")
 
@@ -567,53 +540,101 @@ class MobileCloudDownloader:
             return False
 
     def get_file_list(self, target_filename=None, file_extension=".vsd"):
-        """获取文件列表 - 通过颜色或图片识别文件图标
-        
+        """获取文件列表 - 支持自动滚动查找文件图标
         Args:
             target_filename: 要匹配的文件名关键词（模糊匹配）
             file_extension: 要匹配的文件扩展名，如 ".vsd" 或 ".vsdx"
-        
         Returns:
             匹配的文件项，或 None
         """
+        self.log_step("开始获取文件列表", f"目标扩展名: {file_extension}")
+        time.sleep(2)  # 等待搜索结果加载
+        # 截图记录搜索结果状态
+        self.take_debug_screenshot("search_result")
+
+        # 自动滚动查找（滚轮前先移动鼠标到文件列表区域，最多3次，每次缓冲1秒）
+        max_scroll = 3
+        scroll_count = 0
+        icon_result = None
+        # 获取窗口中部区域坐标
         try:
-            self.log_step("开始获取文件列表", f"目标扩展名: {file_extension}")
-            time.sleep(2)  # 等待搜索结果加载
-            
-            # 截图记录搜索结果状态
-            self.take_debug_screenshot("search_result")
-            
-            # 优先使用图标识别（更准确）
+            if self.main_window is not None:
+                win_rect = self.main_window.rectangle()
+                list_x = win_rect.left + win_rect.width() // 2
+                list_y = win_rect.top + win_rect.height() // 2
+            else:
+                raise Exception("main_window is None")
+        except Exception:
+            # 兜底用屏幕中心
+            screen_width, screen_height = pyautogui.size()
+            list_x = screen_width // 2
+            list_y = screen_height // 2
+
+        while scroll_count < max_scroll:
+            # 1. 图标识别
             icon_result = self.find_by_icon(file_extension)
             if icon_result:
+                if scroll_count > 0:
+                    self.log_step("滚动后找到图标", f"滚动次数: {scroll_count}")
                 return icon_result
-            else:
-                self.log_step("图标识别失败，回退到颜色识别")
-            
+            # 2. 颜色识别
+            color_result = self._find_by_color(file_extension)
+            if color_result:
+                self.log_step("滚动后颜色识别成功", f"滚动次数: {scroll_count}")
+                return color_result
+            self.log_step("未找到图标，鼠标移动到文件列表并滚轮下滑一页", f"第{scroll_count+1}次")
+            # 鼠标先移动到文件列表区域
+            pyautogui.moveTo(list_x, list_y, duration=0.2)
+            time.sleep(0.2)
+            pyautogui.scroll(-120)
+            time.sleep(3.0)
+            # 滚轮后再次比对
+            icon_result = self.find_by_icon(file_extension)
+            if icon_result:
+                self.log_step("滚轮后立即找到图标", f"滚动次数: {scroll_count+1}")
+                return icon_result
+            color_result = self._find_by_color(file_extension)
+            if color_result:
+                self.log_step("滚轮后颜色识别成功", f"滚动次数: {scroll_count+1}")
+                return color_result
+            # 再用 pagedown 兜底
+            pyautogui.press('pagedown')
+            time.sleep(3.0)
+            # pagedown后再次比对
+            icon_result = self.find_by_icon(file_extension)
+            if icon_result:
+                self.log_step("pagedown后立即找到图标", f"滚动次数: {scroll_count+1}")
+                return icon_result
+            color_result = self._find_by_color(file_extension)
+            if color_result:
+                self.log_step("pagedown后颜色识别成功", f"滚动次数: {scroll_count+1}")
+                return color_result
+            scroll_count += 1
+        return None
+
+    def _find_by_color(self, file_extension):
+        """单独暴露颜色识别逻辑，供滚动循环调用"""
+        try:
             screen_width, screen_height = pyautogui.size()
             screenshot = pyautogui.screenshot()
-            
-            # 获取窗口位置
             try:
-                win_rect = self.main_window.rectangle()
-                win_left = win_rect.left
-                win_top = win_rect.top
-                win_width = win_rect.width()
-                win_height = win_rect.height()
-            except:
+                if self.main_window is not None:
+                    win_rect = self.main_window.rectangle()
+                    win_left = win_rect.left
+                    win_top = win_rect.top
+                    win_width = win_rect.width()
+                    win_height = win_rect.height()
+                else:
+                    raise Exception("main_window is None")
+            except Exception:
                 win_left = 0
                 win_top = 0
                 win_width = screen_width // 2
                 win_height = screen_height
-            
-            # 搜索区域：窗口内搜索对话框范围
             search_left = win_left + 50
             search_right = win_left + win_width - 50
             search_top = win_top + 150
             search_bottom = win_top + win_height - 100
-            
-            # 根据文件扩展名确定要识别的颜色
-            # 可以扩展支持更多类型
             color_ranges = {
                 ".vsd": {"name": "紫色(Visio)", "r": (120, 190), "g": (0, 145), "b": (200, 255), "b_g_diff": 60, "r_min_check": 120},
                 ".vsdx": {"name": "紫色(Visio)", "r": (120, 190), "g": (0, 145), "b": (200, 255), "b_g_diff": 60, "r_min_check": 120},
@@ -626,34 +647,25 @@ class MobileCloudDownloader:
                 ".dxf": {"name": "灰色(CAD)", "r": (80, 220), "g": (80, 220), "b": (80, 220), "gray": True},
                 "folder": {"name": "黄色(文件夹)", "r": (220, 255), "g": (140, 230), "b": (0, 140)},
             }
-            
-            # 获取当前文件类型的颜色范围，默认使用 Visio 紫色
             color_config = color_ranges.get(file_extension.lower(), color_ranges[".vsd"])
-            self.log_step("使用颜色识别", f"文件类型: {file_extension}, 颜色: {color_config['name']}")
-            
-            # 查找匹配颜色的像素
-            matched_pixels = []
             step_size = 5
-            
+            matched_pixels = []
             for y in range(search_top, search_bottom, step_size):
                 for x in range(search_left, search_right, step_size):
                     try:
                         pixel = screenshot.getpixel((x, y))
+                        # 检查像素类型，必须为 tuple 且长度>=3
+                        if pixel is None or not isinstance(pixel, tuple) or len(pixel) < 3:
+                            continue
                         r, g, b = pixel[:3]
-                        
-                        # 检查颜色是否在范围内
                         r_min, r_max = color_config["r"]
                         g_min, g_max = color_config["g"]
                         b_min, b_max = color_config["b"]
-                        
                         if r_min <= r <= r_max and g_min <= g <= g_max and b_min <= b <= b_max:
-                            # 额外的颜色差异检查
                             if "gray" in color_config:
-                                # 灰色：RGB三个值接近（差异小于40）
                                 if abs(r - g) < 40 and abs(r - b) < 40 and abs(g - b) < 40:
                                     matched_pixels.append((x, y, pixel))
                             elif "b_g_diff" in color_config:
-                                # 紫色需要额外检查R的最小值，避免蓝色被误判
                                 if b > g + color_config["b_g_diff"]:
                                     if "r_min_check" in color_config:
                                         if r >= color_config["r_min_check"]:
@@ -668,25 +680,12 @@ class MobileCloudDownloader:
                                 matched_pixels.append((x, y, pixel))
                             elif "b_g_diff" not in color_config and "r_g_diff" not in color_config and "g_b_diff" not in color_config and "b_r_diff" not in color_config and "gray" not in color_config:
                                 matched_pixels.append((x, y, pixel))
-                    except:
+                    except Exception:
                         continue
-            
-            self.log_step("找到匹配像素", f"数量: {len(matched_pixels)}")
-            
-            # 记录前几个匹配像素的颜色值，用于调试
-            for i, (px, py, pcolor) in enumerate(matched_pixels[:5]):
-                logging.debug(f"匹配像素 {i+1}: ({px}, {py}), 颜色: {pcolor}")
-            
             if matched_pixels:
-                # 选择最靠近顶部的像素（第一个搜索结果）
                 matched_pixels.sort(key=lambda p: p[1])
                 first_match = matched_pixels[0]
-                
-                # 点击图标右侧的文件名区域
                 click_x, click_y = first_match[0] + 50, first_match[1]
-                
-                self.log_step("找到文件", f"坐标: ({click_x}, {click_y}), 颜色: {first_match[2]}")
-                
                 class FakeFileItem:
                     def __init__(self, x, y):
                         self.x = x
@@ -697,16 +696,10 @@ class MobileCloudDownloader:
                         pyautogui.doubleClick(self.x, self.y)
                     def window_text(self):
                         return f"{file_extension}文件"
-                
                 return FakeFileItem(click_x, click_y)
-            else:
-                self.log_step("未找到匹配文件")
-                logging.error(f"未找到{file_extension}文件")
-                return None
-                
+            return None
         except Exception as e:
-            logging.error(f"获取文件列表失败: {str(e)}")
-            print(f"获取文件列表失败: {str(e)}")
+            logging.error(f"颜色识别失败: {str(e)}")
             return None
 
     def download_file(self, file_item):
