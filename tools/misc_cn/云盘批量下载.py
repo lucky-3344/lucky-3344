@@ -552,8 +552,8 @@ class MobileCloudDownloader:
         # 截图记录搜索结果状态
         self.take_debug_screenshot("search_result")
 
-        # 自动滚动查找（滚轮前先移动鼠标到文件列表区域，最多3次，每次缓冲1秒）
-        max_scroll = 3
+        # 自动滚动查找（滚轮前先移动鼠标到文件列表区域，最多5次，每次缓冲1秒）
+        max_scroll = 5
         scroll_count = 0
         icon_result = None
         # 获取窗口中部区域坐标
